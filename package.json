@@ -1,0 +1,32 @@
+{
+  "name": "elsewhere",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Elsewhere is an immersive audio experience generator that creates cinematic, spatially layered audio journeys designed to help users mentally escape into another environment.",
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "watch": "tsc --watch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Olgabelokopytova90/elsewhere.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Olgabelokopytova90/elsewhere/issues"
+  },
+  "homepage": "https://github.com/Olgabelokopytova90/elsewhere#readme",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^7.0.2"
+  }
+}
