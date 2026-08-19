@@ -14,11 +14,31 @@ const inputArgs = basicScene.clips.flatMap((clip) => [
   resolve(projectRoot, clip.file),
 ]);
 
+function createPanFilters(pan: number): string[] {
+  if (!Number.isFinite(pan) || pan < -1 || pan > 1) {
+    throw new RangeError(`Pan must be between -1 and 1, received ${pan}`);
+  }
+
+  const leftGain = Math.cos(((pan + 1) * Math.PI) / 4);
+  const rightGain = Math.sin(((pan + 1) * Math.PI) / 4);
+
+  return [
+    "pan=mono|c0=0.5*c0+0.5*c1",
+    `pan=stereo|c0=${leftGain}*c0|c1=${rightGain}*c0`,
+  ];
+}
+
 const delayedInputs = basicScene.clips
-  .map(
-    (clip, index) =>
-      `[${index}:a]aresample=48000,adelay=${clip.startSeconds * 1000}:all=1[clip${index}]`,
-  )
+  .map((clip, index) => {
+    const filters = ["aresample=48000"];
+
+    if (clip.pan !== undefined) {
+      filters.push(...createPanFilters(clip.pan));
+    }
+
+    filters.push(`adelay=${clip.startSeconds * 1000}:all=1`);
+    return `[${index}:a]${filters.join(",")}[clip${index}]`;
+  })
   .join(";");
 
 const labels = basicScene.clips.map((_, index) => `[clip${index}]`).join("");
