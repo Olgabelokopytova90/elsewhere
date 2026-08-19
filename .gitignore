@@ -1,2 +1,4 @@
 node_modules/
 dist/
+output/
+assets/audio/forest.wav
