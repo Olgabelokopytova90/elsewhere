@@ -1,17 +1,6 @@
-type AudioClip = {
-  file: string;
-  startSeconds: number;
-  pan?: number;
-  gain?: number;
-  gainEnvelope?: { atSeconds: number; gain: number }[];
-  fadeInSeconds?: number;
-  lowpassHz?: number;
-};
+import type { ResolvedScene } from "./audio-types.js";
 
-export const basicScene: {
-  durationSeconds: number;
-  clips: AudioClip[];
-} = {
+export const basicScene: ResolvedScene = {
   durationSeconds: 41.593375,
   clips: [
     {
