@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { basicScene } from "./timeline.js";
 
 const projectRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
-const outputPath = resolve(projectRoot, "output/basic-mix.wav");
+const outputPath = resolve(projectRoot, "output/forest-directed-v4.wav");
 
 await mkdir(dirname(outputPath), { recursive: true });
 
@@ -28,9 +28,95 @@ function createPanFilters(pan: number): string[] {
   ];
 }
 
+function createGainFilter(gain: number): string {
+  if (!Number.isFinite(gain) || gain < 0) {
+    throw new RangeError(
+      `Gain must be a finite number greater than or equal to 0, received ${gain}`,
+    );
+  }
+
+  return `volume=${gain}`;
+}
+
+function createGainEnvelopeFilter(
+  gainEnvelope: { atSeconds: number; gain: number }[],
+): string {
+  if (gainEnvelope.length < 2 || gainEnvelope[0].atSeconds !== 0) {
+    throw new RangeError("Gain envelope must start at 0 seconds and contain two points");
+  }
+
+  for (let index = 0; index < gainEnvelope.length; index += 1) {
+    const point = gainEnvelope[index];
+
+    if (
+      !Number.isFinite(point.atSeconds) ||
+      point.atSeconds < 0 ||
+      !Number.isFinite(point.gain) ||
+      point.gain < 0 ||
+      (index > 0 && point.atSeconds <= gainEnvelope[index - 1].atSeconds)
+    ) {
+      throw new RangeError("Gain envelope points must have increasing times and non-negative gains");
+    }
+  }
+
+  let expression = String(gainEnvelope[gainEnvelope.length - 1].gain);
+
+  for (let index = gainEnvelope.length - 1; index > 0; index -= 1) {
+    const previous = gainEnvelope[index - 1];
+    const current = gainEnvelope[index];
+    const gainChange = current.gain - previous.gain;
+    const duration = current.atSeconds - previous.atSeconds;
+    const linearGain = `${previous.gain}+(${gainChange})*(t-${previous.atSeconds})/${duration}`;
+
+    expression = `if(lt(t,${current.atSeconds}),${linearGain},${expression})`;
+  }
+
+  return `volume='${expression}':eval=frame`;
+}
+
+function createFadeInFilter(fadeInSeconds: number): string {
+  if (!Number.isFinite(fadeInSeconds) || fadeInSeconds <= 0) {
+    throw new RangeError(
+      `Fade-in duration must be a finite number greater than 0, received ${fadeInSeconds}`,
+    );
+  }
+
+  return `afade=t=in:st=0:d=${fadeInSeconds}`;
+}
+
+function createLowpassFilter(lowpassHz: number): string {
+  if (!Number.isFinite(lowpassHz) || lowpassHz <= 0) {
+    throw new RangeError(
+      `Low-pass frequency must be a finite number greater than 0, received ${lowpassHz}`,
+    );
+  }
+
+  return `lowpass=f=${lowpassHz}`;
+}
+
 const delayedInputs = basicScene.clips
   .map((clip, index) => {
     const filters = ["aresample=48000"];
+
+    if (clip.gain !== undefined && clip.gainEnvelope !== undefined) {
+      throw new RangeError("A clip cannot define both gain and gainEnvelope");
+    }
+
+    if (clip.gain !== undefined) {
+      filters.push(createGainFilter(clip.gain));
+    }
+
+    if (clip.gainEnvelope !== undefined) {
+      filters.push(createGainEnvelopeFilter(clip.gainEnvelope));
+    }
+
+    if (clip.lowpassHz !== undefined) {
+      filters.push(createLowpassFilter(clip.lowpassHz));
+    }
+
+    if (clip.fadeInSeconds !== undefined) {
+      filters.push(createFadeInFilter(clip.fadeInSeconds));
+    }
 
     if (clip.pan !== undefined) {
       filters.push(...createPanFilters(clip.pan));
