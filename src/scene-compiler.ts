@@ -26,7 +26,58 @@ export function compileScene(
 
   for (const step of scene.steps) {
     if (step.kind === "event") {
-      throw new Error(`Event steps are not supported yet: ${step.id}`);
+      if (!Number.isFinite(step.beforeSeconds) || step.beforeSeconds < 0) {
+        throw new RangeError(
+          "Event beforeSeconds must be a finite non-negative number",
+        );
+      }
+
+      if (!Number.isFinite(step.afterSeconds) || step.afterSeconds < 0) {
+        throw new RangeError(
+          "Event afterSeconds must be a finite non-negative number",
+        );
+      }
+
+      if (!Object.hasOwn(assetMetadata, step.file)) {
+        throw new Error(`Missing asset metadata for: ${step.file}`);
+      }
+
+      const assetDuration = assetMetadata[step.file].durationSeconds;
+
+      if (!Number.isFinite(assetDuration) || assetDuration <= 0) {
+        throw new RangeError(
+          `Asset duration must be a finite positive number: ${step.file}`,
+        );
+      }
+
+      cursor += step.beforeSeconds;
+
+      const clip: AudioClip = {
+        file: step.file,
+        startSeconds: cursor,
+      };
+
+      if (step.gain !== undefined) {
+        clip.gain = step.gain;
+      }
+
+      if (step.pan !== undefined) {
+        clip.pan = step.pan;
+      }
+
+      if (step.fadeInSeconds !== undefined) {
+        clip.fadeInSeconds = step.fadeInSeconds;
+      }
+
+      if (step.lowpassHz !== undefined) {
+        clip.lowpassHz = step.lowpassHz;
+      }
+
+      clips.push(clip);
+
+      cursor += assetDuration;
+      cursor += step.afterSeconds;
+      continue;
     }
 
     if (step.actions !== undefined && step.actions.length > 0) {
