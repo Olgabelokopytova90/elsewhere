@@ -1,7 +1,12 @@
-import type { AudioClip, ResolvedScene } from "./audio-types.js";
+import type {
+  AudioClip,
+  GainPoint,
+  ResolvedScene,
+} from "./audio-types.js";
 import type {
   AssetMetadata,
   ContinuousLayer,
+  Focus,
   SemanticScene,
   StartLayerAction,
 } from "./scene-types.js";
@@ -14,7 +19,14 @@ type ClipEntry = {
 type LayerState = {
   layer: ContinuousLayer;
   assetDuration: number;
+  clip?: AudioClip;
   startSeconds?: number;
+};
+
+type FocusInterval = {
+  startSeconds: number;
+  endSeconds: number;
+  focus: Focus;
 };
 
 export function compileScene(
@@ -29,13 +41,19 @@ export function compileScene(
     throw new RangeError("tailSeconds must be a finite non-negative number");
   }
 
-  if (scene.focusRampSeconds !== 0) {
-    throw new RangeError("focusRampSeconds is not supported yet and must be 0");
+  if (
+    !Number.isFinite(scene.focusRampSeconds) ||
+    scene.focusRampSeconds < 0
+  ) {
+    throw new RangeError(
+      "focusRampSeconds must be a finite non-negative number",
+    );
   }
 
   let cursor = scene.openingSeconds;
   let sequence = 0;
   const clipEntries: ClipEntry[] = [];
+  const focusIntervals: FocusInterval[] = [];
   const layerStates = new Map<string, LayerState>();
 
   const addClip = (clip: AudioClip): void => {
@@ -50,7 +68,6 @@ export function compileScene(
     const clip: AudioClip = {
       file: layer.file,
       startSeconds,
-      gain: layer.gainByFocus.environment,
     };
 
     if (layer.pan !== undefined) {
@@ -67,6 +84,27 @@ export function compileScene(
 
     return clip;
   };
+
+  const addFocusInterval = (
+    focus: Focus,
+    startSeconds: number,
+    endSeconds: number,
+  ): void => {
+    const previous = focusIntervals[focusIntervals.length - 1];
+
+    if (
+      previous !== undefined &&
+      previous.focus === focus &&
+      previous.endSeconds === startSeconds
+    ) {
+      previous.endSeconds = endSeconds;
+      return;
+    }
+
+    focusIntervals.push({ focus, startSeconds, endSeconds });
+  };
+
+  addFocusInterval("environment", 0, scene.openingSeconds);
 
   for (const layer of scene.layers) {
     if (layerStates.has(layer.id)) {
@@ -85,9 +123,15 @@ export function compileScene(
       );
     }
 
-    if (layer.gainByFocus.narration !== layer.gainByFocus.environment) {
+    if (
+      layer.gainByFocus.narration !== layer.gainByFocus.environment &&
+      (!Number.isFinite(layer.gainByFocus.narration) ||
+        layer.gainByFocus.narration < 0 ||
+        !Number.isFinite(layer.gainByFocus.environment) ||
+        layer.gainByFocus.environment < 0)
+    ) {
       throw new Error(
-        `Focus-dependent layer gains are not supported yet: ${layer.id}`,
+        `Layer focus gains must be finite non-negative numbers: ${layer.id}`,
       );
     }
 
@@ -100,7 +144,8 @@ export function compileScene(
 
     if (layer.start.kind === "sceneStart") {
       state.startSeconds = 0;
-      addClip(createLayerClip(layer, 0));
+      state.clip = createLayerClip(layer, 0);
+      addClip(state.clip);
     }
   }
 
@@ -138,12 +183,15 @@ export function compileScene(
 
       const startSeconds = stepStart + action.offsetSeconds;
       state.startSeconds = startSeconds;
-      addClip(createLayerClip(state.layer, startSeconds));
+      state.clip = createLayerClip(state.layer, startSeconds);
+      addClip(state.clip);
     }
   };
 
   for (const step of scene.steps) {
     if (step.kind === "event") {
+      const stepStart = cursor;
+
       if (!Number.isFinite(step.beforeSeconds) || step.beforeSeconds < 0) {
         throw new RangeError(
           "Event beforeSeconds must be a finite non-negative number",
@@ -195,6 +243,7 @@ export function compileScene(
 
       cursor += assetDuration;
       cursor += step.afterSeconds;
+      addFocusInterval("environment", stepStart, cursor);
       continue;
     }
 
@@ -218,6 +267,7 @@ export function compileScene(
       });
 
       resolveActions(step.actions, cursor, assetDuration);
+      addFocusInterval("narration", cursor, cursor + assetDuration);
       cursor += assetDuration;
       continue;
     }
@@ -227,13 +277,117 @@ export function compileScene(
     }
 
     resolveActions(step.actions, cursor, step.durationSeconds);
+    addFocusInterval("environment", cursor, cursor + step.durationSeconds);
     cursor += step.durationSeconds;
   }
 
+  const tailStart = cursor;
   cursor += scene.tailSeconds;
+  addFocusInterval("environment", tailStart, cursor);
+
+  for (let index = 0; index < focusIntervals.length; index += 1) {
+    const interval = focusIntervals[index];
+
+    if (interval.focus !== "environment") {
+      continue;
+    }
+
+    const previous = focusIntervals[index - 1];
+    const next = focusIntervals[index + 1];
+    const adjacentNarrationBoundaryCount =
+      (previous?.focus === "narration" ? 1 : 0) +
+      (next?.focus === "narration" ? 1 : 0);
+    const requiredDuration =
+      scene.focusRampSeconds * adjacentNarrationBoundaryCount;
+
+    if (interval.endSeconds - interval.startSeconds < requiredDuration) {
+      throw new Error("Environment focus interval is too short for focus ramps");
+    }
+  }
+
+  const createGlobalGainPoints = (layer: ContinuousLayer): GainPoint[] => {
+    const points: GainPoint[] = [];
+
+    const addPoint = (atSeconds: number, gain: number): void => {
+      const previous = points[points.length - 1];
+
+      if (
+        previous !== undefined &&
+        previous.atSeconds === atSeconds &&
+        previous.gain === gain
+      ) {
+        return;
+      }
+
+      if (previous !== undefined && previous.atSeconds >= atSeconds) {
+        throw new Error("Generated gain envelope points must be strictly ordered");
+      }
+
+      points.push({ atSeconds, gain });
+    };
+
+    addPoint(0, layer.gainByFocus.environment);
+
+    for (let index = 1; index < focusIntervals.length; index += 1) {
+      const previous = focusIntervals[index - 1];
+      const current = focusIntervals[index];
+      const boundary = current.startSeconds;
+
+      if (
+        previous.focus === "environment" &&
+        current.focus === "narration"
+      ) {
+        addPoint(
+          boundary - scene.focusRampSeconds,
+          layer.gainByFocus.environment,
+        );
+        addPoint(boundary, layer.gainByFocus.narration);
+      } else if (
+        previous.focus === "narration" &&
+        current.focus === "environment"
+      ) {
+        addPoint(boundary, layer.gainByFocus.narration);
+        addPoint(
+          boundary + scene.focusRampSeconds,
+          layer.gainByFocus.environment,
+        );
+      }
+    }
+
+    const finalFocus = focusIntervals[focusIntervals.length - 1]?.focus;
+    addPoint(
+      cursor,
+      finalFocus === "narration"
+        ? layer.gainByFocus.narration
+        : layer.gainByFocus.environment,
+    );
+
+    return points;
+  };
+
+  const gainAtTime = (points: GainPoint[], atSeconds: number): number => {
+    for (let index = 0; index < points.length; index += 1) {
+      const current = points[index];
+
+      if (current.atSeconds === atSeconds) {
+        return current.gain;
+      }
+
+      if (current.atSeconds > atSeconds) {
+        const previous = points[index - 1];
+        const progress =
+          (atSeconds - previous.atSeconds) /
+          (current.atSeconds - previous.atSeconds);
+
+        return previous.gain + (current.gain - previous.gain) * progress;
+      }
+    }
+
+    return points[points.length - 1].gain;
+  };
 
   for (const state of layerStates.values()) {
-    if (state.startSeconds === undefined) {
+    if (state.startSeconds === undefined || state.clip === undefined) {
       throw new Error(`Triggered layer was never started: ${state.layer.id}`);
     }
 
@@ -244,6 +398,96 @@ export function compileScene(
         `Layer asset is too short for the resolved scene: ${state.layer.id}`,
       );
     }
+
+    if (
+      state.layer.gainByFocus.narration ===
+      state.layer.gainByFocus.environment
+    ) {
+      state.clip.gain = state.layer.gainByFocus.environment;
+      continue;
+    }
+
+    if (requiredDuration <= 0) {
+      throw new Error(
+        `Focus-dependent layer has no active duration: ${state.layer.id}`,
+      );
+    }
+
+    const crossesFocusTransition = focusIntervals.some(
+      (interval, index) =>
+        index > 0 &&
+        interval.startSeconds > state.startSeconds! &&
+        interval.startSeconds < cursor,
+    );
+
+    if (scene.focusRampSeconds === 0) {
+      if (crossesFocusTransition) {
+        throw new Error(
+          `Focus ramp must be positive for focus-dependent layer: ${state.layer.id}`,
+        );
+      }
+
+      const activeFocus =
+        focusIntervals.find(
+          (interval) =>
+            interval.startSeconds <= state.startSeconds! &&
+            state.startSeconds! < interval.endSeconds,
+        )?.focus ?? focusIntervals[focusIntervals.length - 1]?.focus;
+      const activeGain =
+        activeFocus === "narration"
+          ? state.layer.gainByFocus.narration
+          : state.layer.gainByFocus.environment;
+
+      state.clip.gainEnvelope = [
+        { atSeconds: 0, gain: activeGain },
+        { atSeconds: requiredDuration, gain: activeGain },
+      ];
+      continue;
+    }
+
+    const globalPoints = createGlobalGainPoints(state.layer);
+    const gainEnvelope: GainPoint[] = [
+      {
+        atSeconds: 0,
+        gain: gainAtTime(globalPoints, state.startSeconds),
+      },
+    ];
+
+    const addRelativePoint = (point: GainPoint): void => {
+      const previous = gainEnvelope[gainEnvelope.length - 1];
+
+      if (
+        previous.atSeconds === point.atSeconds &&
+        previous.gain === point.gain
+      ) {
+        return;
+      }
+
+      if (previous.atSeconds >= point.atSeconds) {
+        throw new Error("Generated gain envelope points must be strictly ordered");
+      }
+
+      gainEnvelope.push(point);
+    };
+
+    for (const point of globalPoints) {
+      if (
+        point.atSeconds > state.startSeconds &&
+        point.atSeconds <= cursor
+      ) {
+        addRelativePoint({
+          atSeconds: point.atSeconds - state.startSeconds,
+          gain: point.gain,
+        });
+      }
+    }
+
+    addRelativePoint({
+      atSeconds: requiredDuration,
+      gain: gainAtTime(globalPoints, cursor),
+    });
+
+    state.clip.gainEnvelope = gainEnvelope;
   }
 
   clipEntries.sort(
