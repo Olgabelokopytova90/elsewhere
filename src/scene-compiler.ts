@@ -7,8 +7,8 @@ import type {
   AssetMetadata,
   ContinuousLayer,
   Focus,
+  LayerAction,
   SemanticScene,
-  StartLayerAction,
 } from "./scene-types.js";
 
 type ClipEntry = {
@@ -21,6 +21,7 @@ type LayerState = {
   assetDuration: number;
   clip?: AudioClip;
   startSeconds?: number;
+  stopSeconds?: number;
 };
 
 type FocusInterval = {
@@ -150,11 +151,19 @@ export function compileScene(
   }
 
   const resolveActions = (
-    actions: StartLayerAction[] | undefined,
+    actions: LayerAction[] | undefined,
     stepStart: number,
     stepDuration: number,
   ): void => {
-    for (const action of actions ?? []) {
+    const chronologicalActions = (actions ?? [])
+      .map((action, index) => ({ action, index }))
+      .sort(
+        (left, right) =>
+          left.action.offsetSeconds - right.action.offsetSeconds ||
+          left.index - right.index,
+      );
+
+    for (const { action } of chronologicalActions) {
       if (!Number.isFinite(action.offsetSeconds) || action.offsetSeconds < 0) {
         throw new RangeError(
           "Layer action offset must be a finite non-negative number",
@@ -166,7 +175,21 @@ export function compileScene(
           "Layer action offset must be less than the containing step duration",
         );
       }
+    }
 
+    const previousOffsetByLayerId = new Map<string, number>();
+
+    for (const { action } of chronologicalActions) {
+      if (previousOffsetByLayerId.get(action.layerId) === action.offsetSeconds) {
+        throw new Error(
+          `Layer actions for the same layer cannot share a timestamp: ${action.layerId}`,
+        );
+      }
+
+      previousOffsetByLayerId.set(action.layerId, action.offsetSeconds);
+    }
+
+    for (const { action } of chronologicalActions) {
       const state = layerStates.get(action.layerId);
 
       if (state === undefined) {
@@ -174,16 +197,42 @@ export function compileScene(
       }
 
       if (state.layer.start.kind === "sceneStart") {
-        throw new Error(`Cannot trigger scene-start layer: ${action.layerId}`);
+        if (action.kind === "startLayer") {
+          throw new Error(`Cannot trigger scene-start layer: ${action.layerId}`);
+        }
+
+        throw new Error(`Cannot stop scene-start layer: ${action.layerId}`);
+      }
+
+      const actionSeconds = stepStart + action.offsetSeconds;
+
+      if (action.kind === "stopLayer") {
+        if (state.startSeconds === undefined) {
+          throw new Error(`Cannot stop layer before it starts: ${action.layerId}`);
+        }
+
+        if (state.stopSeconds !== undefined) {
+          throw new Error(`Layer stopped more than once: ${action.layerId}`);
+        }
+
+        if (actionSeconds <= state.startSeconds) {
+          throw new Error(`Layer stop must be after layer start: ${action.layerId}`);
+        }
+
+        state.stopSeconds = actionSeconds;
+        continue;
       }
 
       if (state.startSeconds !== undefined) {
+        if (state.stopSeconds !== undefined) {
+          throw new Error(`Cannot restart stopped layer: ${action.layerId}`);
+        }
+
         throw new Error(`Layer started more than once: ${action.layerId}`);
       }
 
-      const startSeconds = stepStart + action.offsetSeconds;
-      state.startSeconds = startSeconds;
-      state.clip = createLayerClip(state.layer, startSeconds);
+      state.startSeconds = actionSeconds;
+      state.clip = createLayerClip(state.layer, actionSeconds);
       addClip(state.clip);
     }
   };
@@ -391,7 +440,26 @@ export function compileScene(
       throw new Error(`Triggered layer was never started: ${state.layer.id}`);
     }
 
-    const requiredDuration = cursor - state.startSeconds;
+    const activeEndSeconds = state.stopSeconds ?? cursor;
+    const requiredDuration = activeEndSeconds - state.startSeconds;
+
+    if (state.stopSeconds !== undefined) {
+      state.clip.durationSeconds = requiredDuration;
+
+      if (state.layer.fadeOutSeconds !== undefined) {
+        if (
+          !Number.isFinite(state.layer.fadeOutSeconds) ||
+          state.layer.fadeOutSeconds <= 0 ||
+          state.layer.fadeOutSeconds > requiredDuration
+        ) {
+          throw new RangeError(
+            `Layer fade-out duration must be finite, positive, and no greater than its active duration: ${state.layer.id}`,
+          );
+        }
+
+        state.clip.fadeOutSeconds = state.layer.fadeOutSeconds;
+      }
+    }
 
     if (state.assetDuration < requiredDuration) {
       throw new Error(
@@ -417,7 +485,7 @@ export function compileScene(
       (interval, index) =>
         index > 0 &&
         interval.startSeconds > state.startSeconds! &&
-        interval.startSeconds < cursor,
+        interval.startSeconds < activeEndSeconds,
     );
 
     if (scene.focusRampSeconds === 0) {
@@ -473,7 +541,7 @@ export function compileScene(
     for (const point of globalPoints) {
       if (
         point.atSeconds > state.startSeconds &&
-        point.atSeconds <= cursor
+        point.atSeconds <= activeEndSeconds
       ) {
         addRelativePoint({
           atSeconds: point.atSeconds - state.startSeconds,
@@ -484,7 +552,7 @@ export function compileScene(
 
     addRelativePoint({
       atSeconds: requiredDuration,
-      gain: gainAtTime(globalPoints, cursor),
+      gain: gainAtTime(globalPoints, activeEndSeconds),
     });
 
     state.clip.gainEnvelope = gainEnvelope;

@@ -21,6 +21,7 @@ export type ContinuousLayer = {
   };
   pan?: number;
   fadeInSeconds?: number;
+  fadeOutSeconds?: number;
   lowpassHz?: number;
 };
 
@@ -30,20 +31,30 @@ export type StartLayerAction = {
   offsetSeconds: number;
 };
 
+export type StopLayerAction = {
+  kind: "stopLayer";
+  layerId: string;
+  offsetSeconds: number;
+};
+
+export type LayerAction =
+  | StartLayerAction
+  | StopLayerAction;
+
 export type NarrationStep = {
   kind: "narration";
   id: string;
   file: string;
   gain: number;
   focus: "narration";
-  actions?: StartLayerAction[];
+  actions?: LayerAction[];
 };
 
 export type PauseStep = {
   kind: "pause";
   durationSeconds: number;
   focus: "environment";
-  actions?: StartLayerAction[];
+  actions?: LayerAction[];
 };
 
 export type EventStep = {
