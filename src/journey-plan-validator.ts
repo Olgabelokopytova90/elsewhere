@@ -101,13 +101,13 @@ function validateSoundIntent(value: unknown, path: string): void {
   }
 }
 
-function validateStartLayerCue(value: unknown, path: string): void {
+function validateLayerCue(value: unknown, path: string): void {
   assertObject(value, path);
   assertAllowedKeys(value, path, ["kind", "layerId", "offsetSeconds"]);
   assertRequiredKey(value, "kind", `${path}.kind`);
   assertRequiredKey(value, "layerId", `${path}.layerId`);
   assertRequiredKey(value, "offsetSeconds", `${path}.offsetSeconds`);
-  assertEnum(value.kind, `${path}.kind`, ["startLayer"]);
+  assertEnum(value.kind, `${path}.kind`, ["startLayer", "stopLayer"]);
   assertNonEmptyString(value.layerId, `${path}.layerId`);
   assertFiniteNonNegative(value.offsetSeconds, `${path}.offsetSeconds`);
 }
@@ -122,7 +122,7 @@ function validateActions(
   for (let index = 0; index < value.length; index += 1) {
     const actionPath = `${path}[${index}]`;
     const action = value[index];
-    validateStartLayerCue(action, actionPath);
+    validateLayerCue(action, actionPath);
 
     if (pauseDuration !== undefined) {
       assertObject(action, actionPath);
@@ -259,7 +259,14 @@ export function validateJourneyPlan(value: unknown): JourneyPlan {
     stepIds.add(id);
   }
 
-  const startedLayerIds = new Set<string>();
+  type LayerLifecycle = "notStarted" | "active" | "stopped";
+  const lifecycleByLayerId = new Map<string, LayerLifecycle>();
+
+  for (const [layerId, layer] of layersById) {
+    if (layer.start === "triggered") {
+      lifecycleByLayerId.set(layerId, "notStarted");
+    }
+  }
 
   for (let stepIndex = 0; stepIndex < value.steps.length; stepIndex += 1) {
     const step = value.steps[stepIndex] as UnknownObject;
@@ -268,10 +275,31 @@ export function validateJourneyPlan(value: unknown): JourneyPlan {
       continue;
     }
 
-    const actions = step.actions as UnknownObject[];
+    const actions = (step.actions as UnknownObject[])
+      .map((action, actionIndex) => ({ action, actionIndex }))
+      .sort(
+        (left, right) =>
+          (left.action.offsetSeconds as number) -
+            (right.action.offsetSeconds as number) ||
+          left.actionIndex - right.actionIndex,
+      );
 
-    for (let actionIndex = 0; actionIndex < actions.length; actionIndex += 1) {
-      const action = actions[actionIndex];
+    const previousOffsetByLayerId = new Map<string, number>();
+
+    for (const { action } of actions) {
+      const layerId = action.layerId as string;
+      const offsetSeconds = action.offsetSeconds as number;
+
+      if (previousOffsetByLayerId.get(layerId) === offsetSeconds) {
+        throw new TypeError(
+          `steps[${stepIndex}] contains simultaneous lifecycle actions for layer: ${layerId}`,
+        );
+      }
+
+      previousOffsetByLayerId.set(layerId, offsetSeconds);
+    }
+
+    for (const { action, actionIndex } of actions) {
       const layerId = action.layerId as string;
       const actionPath = `steps[${stepIndex}].actions[${actionIndex}]`;
       const layer = layersById.get(layerId);
@@ -283,25 +311,59 @@ export function validateJourneyPlan(value: unknown): JourneyPlan {
       }
 
       if (layer.start === "sceneStart") {
+        if (action.kind === "startLayer") {
+          throw new TypeError(
+            `${actionPath} cannot trigger scene-start layer: ${layerId}`,
+          );
+        }
+
         throw new TypeError(
-          `${actionPath} cannot trigger scene-start layer: ${layerId}`,
+          `${actionPath} cannot stop scene-start layer: ${layerId}`,
         );
       }
 
-      if (startedLayerIds.has(layerId)) {
+      const lifecycle = lifecycleByLayerId.get(layerId)!;
+
+      if (action.kind === "stopLayer") {
+        if (lifecycle === "notStarted") {
+          throw new TypeError(
+            `${actionPath} stops layer before it is started: ${layerId}`,
+          );
+        }
+
+        if (lifecycle === "stopped") {
+          throw new TypeError(
+            `${actionPath} stops layer more than once: ${layerId}`,
+          );
+        }
+
+        lifecycleByLayerId.set(layerId, "stopped");
+        continue;
+      }
+
+      if (lifecycle === "active") {
         throw new TypeError(
           `${actionPath} starts layer more than once: ${layerId}`,
         );
       }
 
-      startedLayerIds.add(layerId);
+      if (lifecycle === "stopped") {
+        throw new TypeError(
+          `${actionPath} restarts stopped layer: ${layerId}`,
+        );
+      }
+
+      lifecycleByLayerId.set(layerId, "active");
     }
   }
 
   for (const layerValue of value.layers) {
     const layer = layerValue as UnknownObject;
 
-    if (layer.start === "triggered" && !startedLayerIds.has(layer.id as string)) {
+    if (
+      layer.start === "triggered" &&
+      lifecycleByLayerId.get(layer.id as string) === "notStarted"
+    ) {
       throw new TypeError(`triggered layer was never started: ${layer.id}`);
     }
   }

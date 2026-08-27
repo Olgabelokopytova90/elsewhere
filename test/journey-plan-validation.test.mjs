@@ -235,3 +235,215 @@ test("accepts a pause action offset within its duration", () => {
 
   assert.equal(validateJourneyPlan(plan), plan);
 });
+
+test("accepts start then stop across different steps", () => {
+  const plan = createValidPlan();
+  plan.steps[1].actions = [
+    {
+      kind: "stopLayer",
+      layerId: "footsteps",
+      offsetSeconds: 1,
+    },
+  ];
+
+  assert.equal(validateJourneyPlan(plan), plan);
+});
+
+test("accepts start then stop inside the same pause", () => {
+  const plan = createValidPlan();
+  delete plan.steps[0].actions;
+  plan.steps[1].actions = [
+    {
+      kind: "startLayer",
+      layerId: "footsteps",
+      offsetSeconds: 0.5,
+    },
+    {
+      kind: "stopLayer",
+      layerId: "footsteps",
+      offsetSeconds: 1.5,
+    },
+  ];
+
+  assert.equal(validateJourneyPlan(plan), plan);
+});
+
+test("interprets same-step actions chronologically without mutation", () => {
+  const plan = createValidPlan();
+  delete plan.steps[0].actions;
+  plan.steps[1].actions = [
+    {
+      kind: "stopLayer",
+      layerId: "footsteps",
+      offsetSeconds: 1.5,
+    },
+    {
+      kind: "startLayer",
+      layerId: "footsteps",
+      offsetSeconds: 0.5,
+    },
+  ];
+  const snapshot = structuredClone(plan);
+
+  assert.equal(validateJourneyPlan(plan), plan);
+  assert.deepEqual(plan, snapshot);
+});
+
+test("rejects stopping a layer before it starts", () => {
+  const plan = createValidPlan();
+  delete plan.steps[0].actions;
+  plan.steps[1].actions = [
+    {
+      kind: "stopLayer",
+      layerId: "footsteps",
+      offsetSeconds: 0.5,
+    },
+    {
+      kind: "startLayer",
+      layerId: "footsteps",
+      offsetSeconds: 1,
+    },
+  ];
+
+  assertValidationError(
+    plan,
+    "steps[1].actions[0] stops layer before it is started: footsteps",
+  );
+});
+
+test("rejects stopping a scene-start layer", () => {
+  const plan = createValidPlan();
+  plan.steps[1].actions = [
+    {
+      kind: "stopLayer",
+      layerId: "ocean",
+      offsetSeconds: 1,
+    },
+  ];
+
+  assertValidationError(
+    plan,
+    "steps[1].actions[0] cannot stop scene-start layer: ocean",
+  );
+});
+
+test("rejects stopping a layer twice", () => {
+  const plan = createValidPlan();
+  plan.steps[1].actions = [
+    {
+      kind: "stopLayer",
+      layerId: "footsteps",
+      offsetSeconds: 0.5,
+    },
+    {
+      kind: "stopLayer",
+      layerId: "footsteps",
+      offsetSeconds: 1.5,
+    },
+  ];
+
+  assertValidationError(
+    plan,
+    "steps[1].actions[1] stops layer more than once: footsteps",
+  );
+});
+
+test("rejects restarting a stopped layer", () => {
+  const plan = createValidPlan();
+  plan.steps[1].actions = [
+    {
+      kind: "stopLayer",
+      layerId: "footsteps",
+      offsetSeconds: 0.5,
+    },
+    {
+      kind: "startLayer",
+      layerId: "footsteps",
+      offsetSeconds: 1.5,
+    },
+  ];
+
+  assertValidationError(
+    plan,
+    "steps[1].actions[1] restarts stopped layer: footsteps",
+  );
+});
+
+test("rejects simultaneous start and stop actions for one layer", () => {
+  const plan = createValidPlan();
+  delete plan.steps[0].actions;
+  plan.steps[1].actions = [
+    {
+      kind: "stopLayer",
+      layerId: "footsteps",
+      offsetSeconds: 1,
+    },
+    {
+      kind: "startLayer",
+      layerId: "footsteps",
+      offsetSeconds: 1,
+    },
+  ];
+
+  assertValidationError(
+    plan,
+    "steps[1] contains simultaneous lifecycle actions for layer: footsteps",
+  );
+});
+
+test("rejects a stop action referencing an unknown layer", () => {
+  const plan = createValidPlan();
+  plan.steps[1].actions = [
+    {
+      kind: "stopLayer",
+      layerId: "wind",
+      offsetSeconds: 1,
+    },
+  ];
+
+  assertValidationError(
+    plan,
+    "steps[1].actions[0] references unknown layer: wind",
+  );
+});
+
+for (const offsetSeconds of [2, 2.5]) {
+  test(`rejects stop offset ${offsetSeconds} outside its pause`, () => {
+    const plan = createValidPlan();
+    plan.steps[1].actions = [
+      {
+        kind: "stopLayer",
+        layerId: "footsteps",
+        offsetSeconds,
+      },
+    ];
+
+    assertValidationError(
+      plan,
+      "steps[1].actions[0].offsetSeconds must be less than the pause duration",
+    );
+  });
+}
+
+test("accepts a started triggered layer that remains active", () => {
+  const plan = createValidPlan();
+
+  assert.equal(validateJourneyPlan(plan), plan);
+});
+
+test("rejects unsupported fields on stop actions", () => {
+  const plan = createValidPlan();
+  plan.steps[1].actions = [
+    {
+      kind: "stopLayer",
+      layerId: "footsteps",
+      offsetSeconds: 1,
+      durationSeconds: 0.25,
+    },
+  ];
+
+  assertValidationError(
+    plan,
+    "steps[1].actions[0] contains unsupported field: durationSeconds",
+  );
+});

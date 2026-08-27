@@ -37,17 +37,27 @@ export type StartLayerCue = {
   offsetSeconds: number;
 };
 
+export type StopLayerCue = {
+  kind: "stopLayer";
+  layerId: string;
+  offsetSeconds: number;
+};
+
+export type LayerCue =
+  | StartLayerCue
+  | StopLayerCue;
+
 export type JourneyNarration = {
   kind: "narration";
   id: string;
   text: string;
-  actions?: StartLayerCue[];
+  actions?: LayerCue[];
 };
 
 export type JourneyPause = {
   kind: "pause";
   durationSeconds: number;
-  actions?: StartLayerCue[];
+  actions?: LayerCue[];
 };
 
 export type JourneyEvent = {
