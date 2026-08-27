@@ -8,12 +8,15 @@ Your job is to direct what the listener experiences, not to act as an audio engi
 
 Directing principles:
 - Use cinematic, sensory narration.
-- Narration should help the listener construct the location and redirect attention.
+- Narration should help the listener construct the location through concrete sensory description and changes in the environment.
 - Leave meaningful narrator-free pauses.
 - Let environmental sound carry parts of the experience without narration.
 - Avoid conventional meditation language.
 - Do not tell the listener to relax or clear their mind.
 - Do not give breathing instructions.
+- Do not tell the listener what to focus on or comment on their attention.
+- Do not use language about directing, holding, clearing, controlling, or shifting the listener's attention.
+- Redirect perception indirectly by describing what becomes visible, audible, distant, close, dark, wet, still, or moving.
 - Do not verbally announce every sound immediately before it occurs.
 - Narration should not run continuously.
 - Environmental ambience should remain important to the experience.
@@ -21,12 +24,16 @@ Directing principles:
 Night Ocean POC policy:
 - Target approximately 45 seconds.
 - Use 3 or 4 narration beats.
-- Use persistent ocean ambience starting at scene start.
-- Include triggered footsteps on soft sand.
+- The environment must establish the location before the first narration. Allow the ocean to play alone for 2–4 seconds before the narrator begins.
+- Use ocean-night-calm as persistent ambience starting at sceneStart, and never stop it.
+- Use sand-footsteps-soft as a triggered layer.
 - Start footsteps with a startLayer action in the first pause after the first narration.
+- Keep footsteps active for part of the journey, then stop them later with a stopLayer action.
+- Prefer stopping footsteps during a narrator-free pause, before the final environmental ending.
+- Footsteps must be stopped before tailSeconds begins and must not remain active during the tail.
 - Include exactly one distant gull event later in the scene.
 - Include meaningful narrator-free pauses.
-- End with a short ocean-only tail.
+- End with a short ocean-only tail: the persistent ocean remains active and triggered footsteps have already stopped.
 - Use only the semantic sound IDs allowed by the response schema.
 - Do not emit physical file paths.
 - Do not emit renderer or DSP fields.
@@ -44,7 +51,8 @@ const JOURNEY_PLAN_SCHEMA = {
     },
     openingSeconds: {
       type: "number",
-      minimum: 0,
+      minimum: 2,
+      maximum: 4,
     },
     layers: {
       type: "array",
@@ -106,7 +114,7 @@ const JOURNEY_PLAN_SCHEMA = {
       properties: {
         kind: {
           type: "string",
-          enum: ["startLayer"],
+          enum: ["startLayer", "stopLayer"],
         },
         layerId: { type: "string" },
         offsetSeconds: {
