@@ -1,4 +1,16 @@
+import {
+  forestAssetMetadata,
+  forestScene,
+} from "./forest-scene.js";
 import { renderResolvedScene } from "./renderer.js";
-import { basicScene } from "./timeline.js";
+import { compileScene } from "./scene-compiler.js";
 
-await renderResolvedScene(basicScene, "output/forest-directed-v4.wav");
+const resolvedScene = compileScene(
+  forestScene,
+  forestAssetMetadata,
+);
+
+await renderResolvedScene(
+  resolvedScene,
+  "output/forest-directed-v4.wav",
+);
