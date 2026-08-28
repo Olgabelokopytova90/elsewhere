@@ -13,6 +13,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "npm run build && node --test",
+    "tts:narration:smoke": "npm run build && node dist/openai-narration-tts-smoke.js",
     "typecheck": "tsc --noEmit",
     "watch": "tsc --watch"
   },
