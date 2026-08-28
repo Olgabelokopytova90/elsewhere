@@ -74,6 +74,27 @@ function createFadeInFilter(fadeInSeconds: number): string {
   return `afade=t=in:st=0:d=${fadeInSeconds}`;
 }
 
+function createFadeOutFilter(
+  durationSeconds: number | undefined,
+  fadeOutSeconds: number,
+): string {
+  if (durationSeconds === undefined) {
+    throw new RangeError("Fade-out requires a clip duration");
+  }
+
+  if (
+    !Number.isFinite(fadeOutSeconds) ||
+    fadeOutSeconds <= 0 ||
+    fadeOutSeconds > durationSeconds
+  ) {
+    throw new RangeError(
+      `Fade-out duration must be finite, positive, and no greater than the clip duration, received ${fadeOutSeconds}`,
+    );
+  }
+
+  return `afade=t=out:st=${durationSeconds - fadeOutSeconds}:d=${fadeOutSeconds}`;
+}
+
 function createLowpassFilter(lowpassHz: number): string {
   if (!Number.isFinite(lowpassHz) || lowpassHz <= 0) {
     throw new RangeError(
@@ -101,6 +122,16 @@ export async function renderResolvedScene(
     .map((clip: AudioClip, index) => {
       const filters = ["aresample=48000"];
 
+      if (clip.durationSeconds !== undefined) {
+        if (!Number.isFinite(clip.durationSeconds) || clip.durationSeconds <= 0) {
+          throw new RangeError(
+            `Clip duration must be a finite number greater than 0, received ${clip.durationSeconds}`,
+          );
+        }
+
+        filters.push(`atrim=start=0:duration=${clip.durationSeconds}`);
+      }
+
       if (clip.gain !== undefined && clip.gainEnvelope !== undefined) {
         throw new RangeError("A clip cannot define both gain and gainEnvelope");
       }
@@ -119,6 +150,12 @@ export async function renderResolvedScene(
 
       if (clip.fadeInSeconds !== undefined) {
         filters.push(createFadeInFilter(clip.fadeInSeconds));
+      }
+
+      if (clip.fadeOutSeconds !== undefined) {
+        filters.push(
+          createFadeOutFilter(clip.durationSeconds, clip.fadeOutSeconds),
+        );
       }
 
       if (clip.pan !== undefined) {

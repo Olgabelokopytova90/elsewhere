@@ -9,7 +9,9 @@ export type AudioClip = {
   pan?: number;
   gain?: number;
   gainEnvelope?: GainPoint[];
+  durationSeconds?: number;
   fadeInSeconds?: number;
+  fadeOutSeconds?: number;
   lowpassHz?: number;
 };
 
