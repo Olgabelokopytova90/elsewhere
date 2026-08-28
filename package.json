@@ -11,6 +11,7 @@
   "scripts": {
     "ai:director:smoke": "npm run build && node dist/openai-ai-director-smoke.js",
     "build": "tsc",
+    "narration:integration:smoke": "npm run build && node dist/night-ocean-narration-integration-smoke.js",
     "start": "node dist/index.js",
     "test": "npm run build && node --test",
     "tts:narration:smoke": "npm run build && node dist/openai-narration-tts-smoke.js",
