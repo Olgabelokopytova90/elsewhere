@@ -20,9 +20,13 @@ import type {
 
 export type LayerProfile =
   | "oceanAmbience"
+  | "forestAmbience"
+  | "rainAmbience"
   | "listenerMovement";
 
-export type EventProfile = "distantEvent";
+export type EventProfile =
+  | "distantEvent"
+  | "nearEnvironmentalEvent";
 
 export type SoundCatalogEntry =
   | {
@@ -87,8 +91,8 @@ export type MaterializationPolicy = {
     prominence: Prominence;
     entrance: Entrance;
   };
-  layerProfiles: Record<LayerProfile, LayerProfilePolicy>;
-  eventProfiles: Record<EventProfile, EventProfilePolicy>;
+  layerProfiles: Partial<Record<LayerProfile, LayerProfilePolicy>>;
+  eventProfiles: Partial<Record<EventProfile, EventProfilePolicy>>;
 };
 
 export type MaterializedJourney = {
@@ -190,11 +194,12 @@ export function materializeJourneyPlan(
       );
     }
 
-    if (!Object.hasOwn(policy.layerProfiles, entry.profile)) {
+    const profile = policy.layerProfiles[entry.profile];
+
+    if (profile === undefined) {
       throw new Error(`Missing materialization policy for profile: ${entry.profile}`);
     }
 
-    const profile = policy.layerProfiles[entry.profile];
     const intent = resolveIntent(layer.sound);
     const direction = profile.directionOverride ?? intent.direction;
     const distance = profile.distanceOverride ?? intent.distance;
@@ -320,11 +325,12 @@ export function materializeJourneyPlan(
       );
     }
 
-    if (!Object.hasOwn(policy.eventProfiles, entry.profile)) {
+    const profile = policy.eventProfiles[entry.profile];
+
+    if (profile === undefined) {
       throw new Error(`Missing materialization policy for profile: ${entry.profile}`);
     }
 
-    const profile = policy.eventProfiles[entry.profile];
     const intent = resolveIntent(step.sound);
     const direction = profile.directionOverride ?? intent.direction;
     const distance = profile.distanceOverride ?? intent.distance;
