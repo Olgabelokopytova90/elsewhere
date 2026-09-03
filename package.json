@@ -23,6 +23,7 @@
     "tts:narration:smoke": "npm run build && node dist/openai-narration-tts-smoke.js",
     "tts:rainy-forest-section-01:smoke": "npm run build && node dist/rainy-forest-section-01-tts-smoke.js",
     "tts:rainy-forest-section-02:smoke": "npm run build && node dist/rainy-forest-section-02-tts-smoke.js",
+    "tts:rainy-forest-section-03:smoke": "npm run build && node dist/rainy-forest-section-03-tts-smoke.js",
     "typecheck": "tsc --noEmit",
     "watch": "tsc --watch"
   },
