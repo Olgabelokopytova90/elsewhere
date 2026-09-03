@@ -18,6 +18,7 @@
     "narration:integration:smoke": "npm run build && node dist/night-ocean-narration-integration-smoke.js",
     "rainy-forest-section-01:integration:smoke": "npm run build && node dist/rainy-forest-section-01-integration-smoke.js",
     "rainy-forest-section-02:integration:smoke": "npm run build && node dist/rainy-forest-section-02-integration-smoke.js",
+    "rainy-forest-section-03:integration:smoke": "npm run build && node dist/rainy-forest-section-03-integration-smoke.js",
     "start": "node dist/index.js",
     "test": "npm run build && node --test",
     "tts:narration:smoke": "npm run build && node dist/openai-narration-tts-smoke.js",

@@ -28,6 +28,12 @@ export const rainyForestSoundCatalog: SoundCatalog = {
     placement: "event",
     profile: "nearEnvironmentalEvent",
   },
+  "bird-distant-single": {
+    file: "synthetic/bird-distant-single.wav",
+    durationSeconds: 2,
+    placement: "event",
+    profile: "distantEvent",
+  },
 };
 
 export const rainyForestMaterializationPolicy: MaterializationPolicy = {
@@ -75,6 +81,16 @@ export const rainyForestMaterializationPolicy: MaterializationPolicy = {
     },
   },
   eventProfiles: {
+    distantEvent: {
+      gainByProminence: {
+        background: 0.25,
+        normal: 0.4,
+        foreground: 0.6,
+      },
+      panByDirection: { left: -0.8, center: 0, right: 0.8 },
+      lowpassByDistance: { near: 10000, mid: 7000, far: 4000 },
+      fadeInSeconds: 0.1,
+    },
     nearEnvironmentalEvent: {
       gainByProminence: {
         background: 0.25,
