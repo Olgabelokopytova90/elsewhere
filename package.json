@@ -11,6 +11,7 @@
   "scripts": {
     "ai:director:smoke": "npm run build && node dist/openai-ai-director-smoke.js",
     "ai:outline:smoke": "npm run build && node dist/openai-journey-outline-smoke.js",
+    "ai:section-02:smoke": "npm run build && node dist/rainy-forest-section-02-director-smoke.js",
     "ai:section:smoke": "npm run build && node dist/openai-section-director-smoke.js",
     "build": "tsc",
     "narration:integration:smoke": "npm run build && node dist/night-ocean-narration-integration-smoke.js",

@@ -9,6 +9,8 @@ import {
 } from "./journey-outline-validator.js";
 import type { JourneyPlan } from "./journey-plan-types.js";
 import { validateJourneyPlan } from "./journey-plan-validator.js";
+import type { SectionContinuity } from "./section-continuity.js";
+import { validateSectionContinuity } from "./section-continuity.js";
 
 const SECTION_DIRECTOR_INSTRUCTIONS = `You are the Section Director for Elsewhere, an immersive cinematic audio experience.
 
@@ -44,6 +46,48 @@ Narration style:
 - Do not use generic meditation language or instructions.
 - Do not write relax, take a breath, breathe, clear your mind, focus your attention, bring your attention, become aware, let go, release, or emotional-release instructions.
 - Do not discuss the listener's attention, awareness, or mindfulness in user-facing narration.
+- Do not literally announce every sound before it occurs.
+
+The JSON Schema owns the response structure.`;
+
+const MIDDLE_SECTION_DIRECTOR_INSTRUCTIONS = `You are the Section Director for Elsewhere, an immersive cinematic audio experience.
+
+Create one detailed semantic JourneyPlan for the selected middle section of an accepted longer JourneyOutline. Direct what the listener experiences; do not act as an audio engineer.
+
+Continuity principles:
+- Entry continuity lists semantic layers already present from the previous section.
+- Redeclare every inherited layer using its exact layerId and soundId. Never rename or replace an inherited identity.
+- An inherited layer with origin sceneStart must be redeclared with start sceneStart. Do not add startLayer or stopLayer actions for it.
+- An inherited layer with origin triggered must be redeclared with start triggered. Give it exactly one technical local startLayer anchor with offsetSeconds 0 in the earliest narration or pause step.
+- That technical anchor keeps this section independently valid; it is not a journey-level restart.
+- An inherited triggered layer may later be stopped if the listener physically stops or the terrain meaningfully changes. Do not stop it merely because the section ends.
+- The future journey assembler, not you, will handle physical source continuation and technical transitions.
+
+Section principles:
+- Preserve the selected section target duration exactly in targetDurationSeconds.
+- This is a middle section. The listener is already inside the rainy forest; do not narratively re-arrive or re-establish it as newly appearing.
+- Deepen movement into the forest, broaden spatial perception, reveal changing terrain or rain behavior, and build gentle forward curiosity.
+- Progress toward the later rain-clearing section without emotionally resolving or concluding the complete journey.
+- Do not fade or stop foundational sceneStart environment layers.
+- Use only sound IDs allowed by the response schema.
+- Prefer zero or one significant event using water-drip-near or bird-distant-single. Avoid event spam.
+- Do not emit files, physical assets, DSP values, renderer settings, source offsets, crossfades, or absolute timestamps.
+
+Pacing principles for this 125-second middle-section POC:
+- Use approximately 4 through 7 openingSeconds as section-local narrator-free environmental time. The world is already active.
+- Prefer three or four concise narration beats totaling approximately 60 to 80 words. These are creative targets, not structural invariants.
+- Narration must remain a minority of the section.
+- Use approximately 55 to 70 seconds of explicit narrator-free pause time across three or four substantial environmental intervals.
+- Prefer tailSeconds around 3 through 6 as a middle-section transition, not a journey conclusion.
+- Avoid micro-pauses, excessive step counts, and continuous audiobook-style prose.
+- Additional duration should primarily create environmental experience rather than proportionally more narration.
+
+Narration style:
+- Write cinematic, restrained, sensory, natural, spatial, and selective narration.
+- Redirect perception indirectly through concrete environmental description and let the environment carry the experience.
+- Do not use generic meditation language or instructions.
+- Do not write relax, take a breath, breathe, clear your mind, focus your attention, bring your attention, become aware, awareness, mindfulness, let go, release, or emotional-release instructions.
+- Do not comment explicitly on the listener's attention.
 - Do not literally announce every sound before it occurs.
 
 The JSON Schema owns the response structure.`;
@@ -269,19 +313,73 @@ function validateRainyForestPolicy(plan: JourneyPlan): void {
   }
 }
 
+function validateContinuityCompatibility(
+  plan: JourneyPlan,
+  continuity: SectionContinuity,
+): void {
+  const earliestActionStepIndex = plan.steps.findIndex(
+    (step) => step.kind === "narration" || step.kind === "pause",
+  );
+
+  for (const inherited of continuity.activeLayers) {
+    const layer = plan.layers.find(
+      (candidate) => candidate.id === inherited.layerId,
+    );
+
+    if (layer === undefined) {
+      throw new Error(
+        `OpenAI Section Director omitted inherited layer: ${inherited.layerId}`,
+      );
+    }
+
+    if (layer.sound.soundId !== inherited.soundId) {
+      throw new Error(
+        `OpenAI Section Director changed inherited soundId for layer: ${inherited.layerId}`,
+      );
+    }
+
+    if (layer.start !== inherited.origin) {
+      throw new Error(
+        `OpenAI Section Director used an incompatible start mode for inherited layer: ${inherited.layerId}`,
+      );
+    }
+
+    if (inherited.origin !== "triggered") {
+      continue;
+    }
+
+    const localAnchor = plan.steps.flatMap((step, stepIndex) =>
+      step.kind === "event"
+        ? []
+        : (step.actions ?? [])
+            .filter(
+              (action) =>
+                action.kind === "startLayer" &&
+                action.layerId === inherited.layerId,
+            )
+            .map((action) => ({ action, stepIndex })),
+    )[0];
+
+    if (
+      localAnchor === undefined ||
+      localAnchor.stepIndex !== earliestActionStepIndex ||
+      localAnchor.action.offsetSeconds !== 0
+    ) {
+      throw new Error(
+        `OpenAI Section Director must anchor inherited triggered layer at offset 0 in the earliest narration or pause step: ${inherited.layerId}`,
+      );
+    }
+  }
+}
+
 export async function createSectionJourneyPlan(
   request: JourneyRequest,
   outline: JourneyOutline,
   sectionIndex: number,
+  continuity?: SectionContinuity,
 ): Promise<JourneyPlan> {
   validateJourneyRequest(request);
   validateJourneyOutline(outline);
-
-  if (outline.targetDurationSeconds !== request.durationSeconds) {
-    throw new Error(
-      "JourneyOutline target duration does not match JourneyRequest",
-    );
-  }
 
   if (
     !Number.isInteger(sectionIndex) ||
@@ -289,6 +387,29 @@ export async function createSectionJourneyPlan(
     sectionIndex >= outline.sections.length
   ) {
     throw new RangeError("sectionIndex must identify an outline section");
+  }
+
+  let validatedContinuity: SectionContinuity | undefined;
+
+  if (continuity !== undefined) {
+    validatedContinuity = validateSectionContinuity(continuity);
+  }
+
+  if (sectionIndex === 0) {
+    if (
+      validatedContinuity !== undefined &&
+      validatedContinuity.activeLayers.length > 0
+    ) {
+      throw new Error("First section continuity must be empty");
+    }
+  } else if (validatedContinuity === undefined) {
+    throw new Error("SectionContinuity is required for non-first sections");
+  }
+
+  if (outline.targetDurationSeconds !== request.durationSeconds) {
+    throw new Error(
+      "JourneyOutline target duration does not match JourneyRequest",
+    );
   }
 
   const currentSection = outline.sections[sectionIndex];
@@ -303,6 +424,9 @@ export async function createSectionJourneyPlan(
     previousSection,
     currentSection,
     nextSection,
+    ...(validatedContinuity === undefined
+      ? {}
+      : { entryContinuity: validatedContinuity }),
   };
   const apiKey = process.env.OPENAI_API_KEY?.trim();
 
@@ -319,7 +443,10 @@ export async function createSectionJourneyPlan(
       reasoning: {
         effort: "low",
       },
-      instructions: SECTION_DIRECTOR_INSTRUCTIONS,
+      instructions:
+        sectionIndex === 0
+          ? SECTION_DIRECTOR_INSTRUCTIONS
+          : MIDDLE_SECTION_DIRECTOR_INSTRUCTIONS,
       input: `Section context:\n${JSON.stringify(sectionContext)}`,
       text: {
         format: {
@@ -384,5 +511,10 @@ export async function createSectionJourneyPlan(
   }
 
   validateRainyForestPolicy(plan);
+
+  if (validatedContinuity !== undefined) {
+    validateContinuityCompatibility(plan, validatedContinuity);
+  }
+
   return plan;
 }

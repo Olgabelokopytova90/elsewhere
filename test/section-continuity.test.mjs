@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { rainyForestSection01Plan } from "../dist/rainy-forest-section-01-poc-fixture.js";
-import { deriveSectionExitState } from "../dist/section-continuity.js";
+import {
+  deriveSectionExitState,
+  validateSectionContinuity,
+} from "../dist/section-continuity.js";
 
 function createPlan({ layers, steps = [] }) {
   return {
@@ -169,4 +172,132 @@ test("returns continuity objects independent from the JourneyPlan", () => {
   assert.equal(plan.layers[0].id, "forest");
   assert.equal(plan.layers[0].sound.soundId, "forest-sound");
   assert.equal(plan.layers[0].start, "sceneStart");
+});
+
+test("accepts valid continuity and returns the same reference", () => {
+  const continuity = {
+    activeLayers: [
+      {
+        layerId: "forest-bed",
+        soundId: "rainy-forest-ambience",
+        origin: "sceneStart",
+      },
+    ],
+  };
+
+  assert.equal(validateSectionContinuity(continuity), continuity);
+});
+
+test("accepts empty continuity", () => {
+  const continuity = { activeLayers: [] };
+
+  assert.equal(validateSectionContinuity(continuity), continuity);
+});
+
+test("rejects an unknown continuity field", () => {
+  assert.throws(
+    () => validateSectionContinuity({ activeLayers: [], extra: true }),
+    {
+      name: "TypeError",
+      message: "SectionContinuity contains unsupported field: extra",
+    },
+  );
+});
+
+test("rejects an unknown active-layer field", () => {
+  assert.throws(
+    () => validateSectionContinuity({
+      activeLayers: [
+        {
+          layerId: "forest-bed",
+          soundId: "rainy-forest-ambience",
+          origin: "sceneStart",
+          extra: true,
+        },
+      ],
+    }),
+    {
+      name: "TypeError",
+      message:
+        "SectionContinuity.activeLayers[0] contains unsupported field: extra",
+    },
+  );
+});
+
+test("rejects an empty continuity layerId", () => {
+  assert.throws(
+    () => validateSectionContinuity({
+      activeLayers: [
+        { layerId: " ", soundId: "forest", origin: "sceneStart" },
+      ],
+    }),
+    {
+      name: "TypeError",
+      message:
+        "SectionContinuity.activeLayers[0].layerId must be a non-empty string",
+    },
+  );
+});
+
+test("rejects an empty continuity soundId", () => {
+  assert.throws(
+    () => validateSectionContinuity({
+      activeLayers: [
+        { layerId: "forest", soundId: "", origin: "sceneStart" },
+      ],
+    }),
+    {
+      name: "TypeError",
+      message:
+        "SectionContinuity.activeLayers[0].soundId must be a non-empty string",
+    },
+  );
+});
+
+test("rejects an invalid continuity origin", () => {
+  assert.throws(
+    () => validateSectionContinuity({
+      activeLayers: [
+        { layerId: "forest", soundId: "forest", origin: "inherited" },
+      ],
+    }),
+    {
+      name: "TypeError",
+      message:
+        "SectionContinuity.activeLayers[0].origin must be one of: sceneStart, triggered",
+    },
+  );
+});
+
+test("rejects duplicate continuity layer IDs", () => {
+  assert.throws(
+    () => validateSectionContinuity({
+      activeLayers: [
+        { layerId: "forest", soundId: "forest", origin: "sceneStart" },
+        { layerId: "forest", soundId: "rain", origin: "sceneStart" },
+      ],
+    }),
+    {
+      name: "TypeError",
+      message:
+        "SectionContinuity.activeLayers[1].layerId duplicates layer id: forest",
+    },
+  );
+});
+
+test("validates continuity without mutation", () => {
+  const continuity = {
+    activeLayers: [
+      {
+        layerId: " forest-bed ",
+        soundId: " rainy-forest-ambience ",
+        origin: "sceneStart",
+      },
+    ],
+  };
+  const snapshot = structuredClone(continuity);
+
+  validateSectionContinuity(continuity);
+
+  assert.deepEqual(continuity, snapshot);
 });
