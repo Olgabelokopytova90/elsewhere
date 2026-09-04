@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assembleJourneyTimeline } from "../dist/journey-assembler.js";
+import {
+  assembleJourneyTimeline,
+  assembleJourneyTimelineWithTrace,
+} from "../dist/journey-assembler.js";
 import { deriveSectionExitState } from "../dist/section-continuity.js";
 import { rainyForestSection01Plan } from "../dist/rainy-forest-section-01-poc-fixture.js";
 import { rainyForestSection02Plan } from "../dist/rainy-forest-section-02-poc-fixture.js";
@@ -337,4 +340,394 @@ test("assembles the frozen Rainy Forest boundary semantics deterministically", (
       },
     ],
   });
+});
+
+function tracedPlan() {
+  return {
+    targetDurationSeconds: 9,
+    openingSeconds: 1,
+    layers: [
+      {
+        id: "bed",
+        sound: { soundId: "ambience" },
+        start: "sceneStart",
+      },
+      {
+        id: "steps",
+        sound: { soundId: "footsteps" },
+        start: "triggered",
+      },
+    ],
+    steps: [
+      {
+        kind: "narration",
+        id: "spoken",
+        text: "A narration.",
+        actions: [
+          { kind: "startLayer", layerId: "steps", offsetSeconds: 0 },
+        ],
+      },
+      {
+        kind: "event",
+        id: "bird",
+        sound: { soundId: "bird" },
+        beforeSeconds: 1,
+        afterSeconds: 1,
+      },
+      {
+        kind: "pause",
+        durationSeconds: 2,
+        actions: [
+          { kind: "stopLayer", layerId: "steps", offsetSeconds: 1 },
+        ],
+      },
+    ],
+    tailSeconds: 1,
+  };
+}
+
+function tracedCompiledScene() {
+  return {
+    resolvedScene: { durationSeconds: 9, clips: [] },
+    trace: {
+      narrations: [{
+        narrationId: "spoken",
+        file: "narration.wav",
+        stepIndex: 0,
+        startSeconds: 1,
+        durationSeconds: 2,
+        endSeconds: 3,
+      }],
+      events: [{
+        eventId: "bird",
+        file: "bird.wav",
+        stepIndex: 1,
+        startSeconds: 4,
+        durationSeconds: 1,
+        endSeconds: 5,
+        sequenceEndSeconds: 6,
+      }],
+      layerActions: [
+        {
+          layerId: "steps",
+          kind: "startLayer",
+          stepIndex: 0,
+          actionIndex: 0,
+          atSeconds: 1,
+        },
+        {
+          layerId: "steps",
+          kind: "stopLayer",
+          stepIndex: 2,
+          actionIndex: 0,
+          atSeconds: 7,
+        },
+      ],
+    },
+  };
+}
+
+function tracedSection(sectionId = "traced", entryContinuity = emptyContinuity()) {
+  return {
+    sectionId,
+    plan: tracedPlan(),
+    entryContinuity,
+    compiledScene: tracedCompiledScene(),
+  };
+}
+
+test("empty traced input preserves the base empty journey", () => {
+  assert.deepEqual(assembleJourneyTimelineWithTrace([]), {
+    durationSeconds: 0,
+    sections: [],
+    layerBoundaries: [],
+    finalContinuity: { activeLayers: [] },
+    narrations: [],
+    events: [],
+    timedLayerBoundaries: [],
+  });
+});
+
+test("adds compiler-authoritative narration and event global placements", () => {
+  const firstPlan = sceneStartPlan();
+  const first = {
+    sectionId: "first",
+    plan: firstPlan,
+    entryContinuity: emptyContinuity(),
+    compiledScene: {
+      resolvedScene: { durationSeconds: 10, clips: [] },
+      trace: { narrations: [], events: [], layerActions: [] },
+    },
+  };
+  const second = tracedSection("second", deriveSectionExitState(firstPlan));
+  const result = assembleJourneyTimelineWithTrace([first, second]);
+
+  assert.deepEqual(result.narrations, [{
+    sectionId: "second",
+    narrationId: "spoken",
+    file: "narration.wav",
+    stepIndex: 0,
+    durationSeconds: 2,
+    localStartSeconds: 1,
+    localEndSeconds: 3,
+    globalStartSeconds: 11,
+    globalEndSeconds: 13,
+  }]);
+  assert.deepEqual(result.events, [{
+    sectionId: "second",
+    eventId: "bird",
+    file: "bird.wav",
+    stepIndex: 1,
+    durationSeconds: 1,
+    localStartSeconds: 4,
+    localEndSeconds: 5,
+    localSequenceEndSeconds: 6,
+    globalStartSeconds: 14,
+    globalEndSeconds: 15,
+    globalSequenceEndSeconds: 16,
+  }]);
+});
+
+test("times scene-start and explicit-action boundaries without changing kinds", () => {
+  const result = assembleJourneyTimelineWithTrace([tracedSection()]);
+
+  assert.deepEqual(
+    result.timedLayerBoundaries.map((boundary) => ({
+      layerId: boundary.layerId,
+      kind: boundary.kind,
+      localAtSeconds: boundary.localAtSeconds,
+      globalAtSeconds: boundary.globalAtSeconds,
+    })),
+    [
+      {
+        layerId: "bed",
+        kind: "semanticStart",
+        localAtSeconds: 0,
+        globalAtSeconds: 0,
+      },
+      {
+        layerId: "steps",
+        kind: "semanticStart",
+        localAtSeconds: 1,
+        globalAtSeconds: 1,
+      },
+      {
+        layerId: "steps",
+        kind: "semanticStop",
+        localAtSeconds: 7,
+        globalAtSeconds: 7,
+      },
+    ],
+  );
+  assert.deepEqual(
+    result.timedLayerBoundaries.map((boundary) => {
+      const { localAtSeconds, globalAtSeconds, ...semanticBoundary } = boundary;
+      return semanticBoundary;
+    }),
+    result.layerBoundaries,
+  );
+});
+
+test("rejects missing, duplicate, and wrong narration provenance", () => {
+  const missing = tracedSection();
+  missing.compiledScene.trace.narrations = [];
+  assert.throws(
+    () => assembleJourneyTimelineWithTrace([missing]),
+    /narrations is missing trace for step 0/,
+  );
+
+  const duplicate = tracedSection();
+  duplicate.compiledScene.trace.narrations.push({
+    ...duplicate.compiledScene.trace.narrations[0],
+  });
+  assert.throws(
+    () => assembleJourneyTimelineWithTrace([duplicate]),
+    /duplicates narration trace for step 0/,
+  );
+
+  const wrong = tracedSection();
+  wrong.compiledScene.trace.narrations[0].narrationId = "wrong";
+  assert.throws(
+    () => assembleJourneyTimelineWithTrace([wrong]),
+    /narrationId mismatch.*expected spoken, received wrong/,
+  );
+});
+
+test("rejects missing and wrong event provenance", () => {
+  const missing = tracedSection();
+  missing.compiledScene.trace.events = [];
+  assert.throws(
+    () => assembleJourneyTimelineWithTrace([missing]),
+    /events is missing trace for step 1/,
+  );
+
+  const wrong = tracedSection();
+  wrong.compiledScene.trace.events[0].eventId = "wrong";
+  assert.throws(
+    () => assembleJourneyTimelineWithTrace([wrong]),
+    /eventId mismatch.*expected bird, received wrong/,
+  );
+});
+
+test("rejects missing, duplicate, and wrong action provenance", () => {
+  const missing = tracedSection();
+  missing.compiledScene.trace.layerActions.pop();
+  assert.throws(
+    () => assembleJourneyTimelineWithTrace([missing]),
+    /layerActions is missing trace for step 2, action 0/,
+  );
+
+  const duplicate = tracedSection();
+  duplicate.compiledScene.trace.layerActions.push({
+    ...duplicate.compiledScene.trace.layerActions[0],
+  });
+  assert.throws(
+    () => assembleJourneyTimelineWithTrace([duplicate]),
+    /duplicates layer action trace/,
+  );
+
+  const wrong = tracedSection();
+  wrong.compiledScene.trace.layerActions[0].layerId = "wrong";
+  assert.throws(
+    () => assembleJourneyTimelineWithTrace([wrong]),
+    /provenance mismatch/,
+  );
+});
+
+test("does not mutate traced inputs and returns independent timing objects", () => {
+  const input = tracedSection();
+  const snapshot = structuredClone(input);
+  const first = assembleJourneyTimelineWithTrace([input]);
+  const second = assembleJourneyTimelineWithTrace([input]);
+
+  first.narrations[0].narrationId = "changed";
+  first.events[0].eventId = "changed";
+  first.timedLayerBoundaries[0].layerId = "changed";
+
+  assert.deepEqual(input, snapshot);
+  assert.equal(second.narrations[0].narrationId, "spoken");
+  assert.equal(second.events[0].eventId, "bird");
+  assert.equal(second.timedLayerBoundaries[0].layerId, "bed");
+});
+
+function minimalTraceForPlan(plan, actionTimes = new Map()) {
+  const trace = { narrations: [], events: [], layerActions: [] };
+
+  for (let stepIndex = 0; stepIndex < plan.steps.length; stepIndex += 1) {
+    const step = plan.steps[stepIndex];
+
+    if (step.kind === "narration") {
+      trace.narrations.push({
+        narrationId: step.id,
+        file: `memory/${step.id}.wav`,
+        stepIndex,
+        startSeconds: 1,
+        durationSeconds: 1,
+        endSeconds: 2,
+      });
+    } else if (step.kind === "event") {
+      trace.events.push({
+        eventId: step.id,
+        file: `memory/${step.id}.wav`,
+        stepIndex,
+        startSeconds: 2,
+        durationSeconds: 1,
+        endSeconds: 3,
+        sequenceEndSeconds: 4,
+      });
+      continue;
+    }
+
+    for (let actionIndex = 0; actionIndex < (step.actions?.length ?? 0); actionIndex += 1) {
+      const action = step.actions[actionIndex];
+      trace.layerActions.push({
+        layerId: action.layerId,
+        kind: action.kind,
+        stepIndex,
+        actionIndex,
+        atSeconds: actionTimes.get(`${stepIndex}:${actionIndex}`) ?? 1,
+      });
+    }
+  }
+
+  return trace;
+}
+
+test("adds authoritative timing to the frozen Rainy Forest suppressed anchors and stop", () => {
+  const section01Exit = deriveSectionExitState(rainyForestSection01Plan);
+  const section02Exit = deriveSectionExitState(rainyForestSection02Plan);
+  const inputs = [
+    {
+      sectionId: "section-01",
+      plan: rainyForestSection01Plan,
+      entryContinuity: emptyContinuity(),
+      compiledScene: {
+        resolvedScene: { durationSeconds: 97.45, clips: [] },
+        trace: minimalTraceForPlan(rainyForestSection01Plan),
+      },
+    },
+    {
+      sectionId: "section-02",
+      plan: rainyForestSection02Plan,
+      entryContinuity: section01Exit,
+      compiledScene: {
+        resolvedScene: { durationSeconds: 120.15, clips: [] },
+        trace: minimalTraceForPlan(
+          rainyForestSection02Plan,
+          new Map([["0:0", 5]]),
+        ),
+      },
+    },
+    {
+      sectionId: "section-03",
+      plan: rainyForestSection03Plan,
+      entryContinuity: section02Exit,
+      compiledScene: {
+        resolvedScene: { durationSeconds: 87.3, clips: [] },
+        trace: minimalTraceForPlan(
+          rainyForestSection03Plan,
+          new Map([["0:0", 5], ["3:0", 34.7]]),
+        ),
+      },
+    },
+  ];
+  const result = assembleJourneyTimelineWithTrace(inputs);
+  const section02Start = result.timedLayerBoundaries.find(
+    (boundary) =>
+      boundary.sectionId === "section-02" &&
+      boundary.layerId === "trail-steps",
+  );
+  const section03Boundaries = result.timedLayerBoundaries.filter(
+    (boundary) =>
+      boundary.sectionId === "section-03" &&
+      boundary.layerId === "trail-steps",
+  );
+
+  assert.equal(result.durationSeconds, 304.90000000000003);
+  assert.equal(section02Start.kind, "suppressedInheritedTriggeredStart");
+  assert.equal(section02Start.localAtSeconds, 5);
+  assert.equal(section02Start.globalAtSeconds, 102.45);
+  assert.deepEqual(
+    section03Boundaries.map(({ kind, localAtSeconds, globalAtSeconds }) => ({
+      kind,
+      localAtSeconds,
+      globalAtSeconds,
+    })),
+    [
+      {
+        kind: "suppressedInheritedTriggeredStart",
+        localAtSeconds: 5,
+        globalAtSeconds: 222.60000000000002,
+      },
+      {
+        kind: "semanticStop",
+        localAtSeconds: 34.7,
+        globalAtSeconds: 252.3,
+      },
+    ],
+  );
+  assert.deepEqual(
+    result.finalContinuity.activeLayers.map((layer) => layer.layerId),
+    ["forest-bed", "canopy-rain"],
+  );
 });
