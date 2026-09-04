@@ -30,10 +30,48 @@ type FocusInterval = {
   focus: Focus;
 };
 
-export function compileScene(
+export type CompiledNarrationTrace = {
+  narrationId: string;
+  file: string;
+  stepIndex: number;
+  startSeconds: number;
+  durationSeconds: number;
+  endSeconds: number;
+};
+
+export type CompiledEventTrace = {
+  eventId: string;
+  file: string;
+  stepIndex: number;
+  startSeconds: number;
+  durationSeconds: number;
+  endSeconds: number;
+  sequenceEndSeconds: number;
+};
+
+export type CompiledLayerActionTrace = {
+  layerId: string;
+  kind: "startLayer" | "stopLayer";
+  stepIndex: number;
+  actionIndex: number;
+  atSeconds: number;
+};
+
+export type CompiledSceneTrace = {
+  narrations: CompiledNarrationTrace[];
+  events: CompiledEventTrace[];
+  layerActions: CompiledLayerActionTrace[];
+};
+
+export type CompiledScene = {
+  resolvedScene: ResolvedScene;
+  trace: CompiledSceneTrace;
+};
+
+function compileSceneInternal(
   scene: SemanticScene,
   assetMetadata: AssetMetadata,
-): ResolvedScene {
+): CompiledScene {
   if (!Number.isFinite(scene.openingSeconds) || scene.openingSeconds < 0) {
     throw new RangeError("openingSeconds must be a finite non-negative number");
   }
@@ -56,6 +94,11 @@ export function compileScene(
   const clipEntries: ClipEntry[] = [];
   const focusIntervals: FocusInterval[] = [];
   const layerStates = new Map<string, LayerState>();
+  const trace: CompiledSceneTrace = {
+    narrations: [],
+    events: [],
+    layerActions: [],
+  };
 
   const addClip = (clip: AudioClip): void => {
     clipEntries.push({ clip, sequence });
@@ -154,6 +197,7 @@ export function compileScene(
     actions: LayerAction[] | undefined,
     stepStart: number,
     stepDuration: number,
+    stepIndex: number,
   ): void => {
     const chronologicalActions = (actions ?? [])
       .map((action, index) => ({ action, index }))
@@ -189,7 +233,7 @@ export function compileScene(
       previousOffsetByLayerId.set(action.layerId, action.offsetSeconds);
     }
 
-    for (const { action } of chronologicalActions) {
+    for (const { action, index: actionIndex } of chronologicalActions) {
       const state = layerStates.get(action.layerId);
 
       if (state === undefined) {
@@ -205,6 +249,14 @@ export function compileScene(
       }
 
       const actionSeconds = stepStart + action.offsetSeconds;
+
+      trace.layerActions.push({
+        layerId: action.layerId,
+        kind: action.kind,
+        stepIndex,
+        actionIndex,
+        atSeconds: actionSeconds,
+      });
 
       if (action.kind === "stopLayer") {
         if (state.startSeconds === undefined) {
@@ -237,7 +289,9 @@ export function compileScene(
     }
   };
 
-  for (const step of scene.steps) {
+  for (let stepIndex = 0; stepIndex < scene.steps.length; stepIndex += 1) {
+    const step = scene.steps[stepIndex];
+
     if (step.kind === "event") {
       const stepStart = cursor;
 
@@ -290,8 +344,20 @@ export function compileScene(
 
       addClip(clip);
 
+      const eventStartSeconds = cursor;
+      const eventEndSeconds = eventStartSeconds + assetDuration;
+
       cursor += assetDuration;
       cursor += step.afterSeconds;
+      trace.events.push({
+        eventId: step.id,
+        file: step.file,
+        stepIndex,
+        startSeconds: eventStartSeconds,
+        durationSeconds: assetDuration,
+        endSeconds: eventEndSeconds,
+        sequenceEndSeconds: cursor,
+      });
       addFocusInterval("environment", stepStart, cursor);
       continue;
     }
@@ -309,14 +375,25 @@ export function compileScene(
         );
       }
 
+      const narrationStartSeconds = cursor;
+      const narrationEndSeconds = narrationStartSeconds + assetDuration;
+
       addClip({
         file: step.file,
-        startSeconds: cursor,
+        startSeconds: narrationStartSeconds,
         gain: step.gain,
       });
 
-      resolveActions(step.actions, cursor, assetDuration);
-      addFocusInterval("narration", cursor, cursor + assetDuration);
+      trace.narrations.push({
+        narrationId: step.id,
+        file: step.file,
+        stepIndex,
+        startSeconds: narrationStartSeconds,
+        durationSeconds: assetDuration,
+        endSeconds: narrationEndSeconds,
+      });
+      resolveActions(step.actions, cursor, assetDuration, stepIndex);
+      addFocusInterval("narration", cursor, narrationEndSeconds);
       cursor += assetDuration;
       continue;
     }
@@ -325,7 +402,7 @@ export function compileScene(
       throw new RangeError("Pause duration must be a finite non-negative number");
     }
 
-    resolveActions(step.actions, cursor, step.durationSeconds);
+    resolveActions(step.actions, cursor, step.durationSeconds, stepIndex);
     addFocusInterval("environment", cursor, cursor + step.durationSeconds);
     cursor += step.durationSeconds;
   }
@@ -565,7 +642,24 @@ export function compileScene(
   );
 
   return {
-    durationSeconds: cursor,
-    clips: clipEntries.map(({ clip }) => clip),
+    resolvedScene: {
+      durationSeconds: cursor,
+      clips: clipEntries.map(({ clip }) => clip),
+    },
+    trace,
   };
+}
+
+export function compileScene(
+  scene: SemanticScene,
+  assetMetadata: AssetMetadata,
+): ResolvedScene {
+  return compileSceneInternal(scene, assetMetadata).resolvedScene;
+}
+
+export function compileSceneWithTrace(
+  scene: SemanticScene,
+  assetMetadata: AssetMetadata,
+): CompiledScene {
+  return compileSceneInternal(scene, assetMetadata);
 }

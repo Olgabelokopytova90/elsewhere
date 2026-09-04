@@ -6,19 +6,19 @@ import type {
 export const rainyForestSoundCatalog: SoundCatalog = {
   "rainy-forest-ambience": {
     file: "synthetic/rainy-forest-ambience.wav",
-    durationSeconds: 120,
+    durationSeconds: 180,
     placement: "sceneStartLayer",
     profile: "forestAmbience",
   },
   "rain-canopy-steady": {
     file: "synthetic/rain-canopy-steady.wav",
-    durationSeconds: 120,
+    durationSeconds: 180,
     placement: "sceneStartLayer",
     profile: "rainAmbience",
   },
   "wet-trail-footsteps": {
     file: "synthetic/wet-trail-footsteps.wav",
-    durationSeconds: 90,
+    durationSeconds: 150,
     placement: "triggeredLayer",
     profile: "listenerMovement",
   },
@@ -27,6 +27,12 @@ export const rainyForestSoundCatalog: SoundCatalog = {
     durationSeconds: 1,
     placement: "event",
     profile: "nearEnvironmentalEvent",
+  },
+  "bird-distant-single": {
+    file: "synthetic/bird-distant-single.wav",
+    durationSeconds: 2,
+    placement: "event",
+    profile: "distantEvent",
   },
 };
 
@@ -75,6 +81,16 @@ export const rainyForestMaterializationPolicy: MaterializationPolicy = {
     },
   },
   eventProfiles: {
+    distantEvent: {
+      gainByProminence: {
+        background: 0.25,
+        normal: 0.4,
+        foreground: 0.6,
+      },
+      panByDirection: { left: -0.8, center: 0, right: 0.8 },
+      lowpassByDistance: { near: 10000, mid: 7000, far: 4000 },
+      fadeInSeconds: 0.1,
+    },
     nearEnvironmentalEvent: {
       gainByProminence: {
         background: 0.25,
